@@ -5,17 +5,17 @@ from sqlalchemy import create_engine, text
 from datetime import date
 from io import BytesIO
 
-# ========== CONEXÃO COM SUPABASE ==========
+# Conexão com Supabase
 db_url = st.secrets["database"]["url"]
 engine = create_engine(db_url)
 conn = engine.connect()
 
-# ========== AUTENTICAÇÃO ==========
+# Sessão de login
 if "usuario" not in st.session_state:
     st.session_state.usuario = None
 
 def login(email, senha):
-    query = text("SELECT * FROM usuarios WHERE email = :email AND senha = :senha")
+    query = text("SELECT * FROM usuarios WHERE LOWER(email) = LOWER(:email) AND senha = :senha")
     result = conn.execute(query, {"email": email, "senha": senha}).fetchone()
     return result
 
@@ -27,15 +27,45 @@ def cadastrar(nome, email, senha):
     except:
         return False
 
-def get_todos(table):
-    return conn.execute(text(f"SELECT id, nome FROM {table}")).fetchall()
+def get_todos(tabela):
+    return conn.execute(text(f"SELECT id, nome FROM {tabela}")).fetchall()
 
 def get_descricoes():
     return conn.execute(text("SELECT id, texto FROM descricoes")).fetchall()
 
+def exportar_excel_formatado():
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        escolas = get_todos("escolas")
+        resumo = []
+        for escola_id, escola_nome in escolas:
+            query = text("""
+                SELECT data, mercadoria, descricao, debito, credito
+                FROM lancamentos
+                WHERE escola_id = :id
+                ORDER BY data
+            """)
+            dados = conn.execute(query, {"id": escola_id}).fetchall()
+            df = pd.DataFrame(dados, columns=["Data", "Mercadoria", "Descrição", "Débito", "Crédito"])
+            df["Débito"] = df["Débito"].fillna(0)
+            df["Crédito"] = df["Crédito"].fillna(0)
+            df["Saldo"] = df["Crédito"] - df["Débito"]
+            df["Saldo Acumulado"] = df["Saldo"].cumsum()
+            df.to_excel(writer, sheet_name=escola_nome[:31], index=False)
+            saldo_final = df["Saldo"].sum()
+            resumo.append({"Escola": escola_nome, "Saldo Final": round(saldo_final, 2)})
+        df_resumo = pd.DataFrame(resumo)
+        df_resumo.to_excel(writer, sheet_name="Resumo", index=False)
+    st.download_button(
+        label="📥 Baixar Excel com todas as escolas",
+        data=buffer.getvalue(),
+        file_name="Controle_Escolas.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
 def tela_login():
     st.title("🔐 Login")
-    with st.form("form_login"):
+    with st.form("login"):
         email = st.text_input("Email")
         senha = st.text_input("Senha", type="password")
         if st.form_submit_button("Entrar"):
@@ -45,7 +75,8 @@ def tela_login():
                 st.rerun()
             else:
                 st.error("Credenciais inválidas.")
-    st.markdown("## Criar conta")
+
+    st.subheader("Criar conta")
     with st.form("cadastro"):
         nome = st.text_input("Nome")
         email2 = st.text_input("Email (cadastro)")
@@ -54,14 +85,15 @@ def tela_login():
             if cadastrar(nome, email2, senha2):
                 st.success("Conta criada! Faça login.")
             else:
-                st.error("Erro ao cadastrar.")
+                st.error("Erro ao cadastrar")
 
-# ========== APP ==========
+# App principal
 if st.session_state.usuario:
-    st.sidebar.title(f"Bem-vindo, {st.session_state.usuario['nome']}!")
+    st.sidebar.title(f"Olá, {st.session_state.usuario['nome']}")
     menu = st.sidebar.radio("Menu", [
-        "Dashboard 📊", "Entregas", "Financeiro", "Exportar Excel",
-        "Gestão de Escolas", "Gestão de Mercadorias", "Gestão de Descrições", "Sair"
+        "Dashboard 📊", "Entregas", "Financeiro",
+        "Exportar Excel", "Gestão de Escolas",
+        "Gestão de Mercadorias", "Gestão de Descrições", "Sair"
     ])
 
     if menu == "Sair":
@@ -80,7 +112,7 @@ if st.session_state.usuario:
             df = pd.DataFrame(ent, columns=["Produto", "Quantidade"])
             st.bar_chart(df.set_index("Produto"))
         else:
-            st.info("Nenhuma entrega encontrada.")
+            st.info("Nenhuma entrega registrada ainda.")
 
     elif menu == "Entregas":
         st.title("📦 Registrar Entrega")
@@ -93,14 +125,12 @@ if st.session_state.usuario:
             mercadoria_id = [m[0] for m in mercadorias if m[1] == mercadoria][0]
             data = st.date_input("Data", value=date.today())
             qtd = st.number_input("Quantidade", 0, 10000)
-            if st.button("Registrar"):
+            if st.button("Registrar Entrega"):
                 conn.execute(text("""
                     INSERT INTO entregas (escola_id, mercadoria_id, data, quantidade)
                     VALUES (:e, :m, :d, :q)
                 """), {"e": escola_id, "m": mercadoria_id, "d": data, "q": qtd})
-                st.success("Entrega registrada.")
-        else:
-            st.warning("Cadastre escolas e mercadorias antes.")
+                st.success("Entrega registrada!")
 
     elif menu == "Financeiro":
         st.title("💰 Lançamento Financeiro")
@@ -113,11 +143,8 @@ if st.session_state.usuario:
             mercadoria = st.selectbox("Mercadoria", [m[1] for m in mercadorias])
             descricao = st.selectbox("Descrição", [d[1] for d in descricoes])
             data = st.date_input("Data")
-            col1, col2 = st.columns(2)
-            with col1:
-                debito = st.number_input("Débito", 0.0)
-            with col2:
-                credito = st.number_input("Crédito", 0.0)
+            debito = st.number_input("Débito", 0.0)
+            credito = st.number_input("Crédito", 0.0)
             if st.button("Lançar"):
                 conn.execute(text("""
                     INSERT INTO lancamentos (escola_id, data, mercadoria, descricao, debito, credito)
@@ -126,19 +153,11 @@ if st.session_state.usuario:
                     "e": escola_id, "d": data, "m": mercadoria, "desc": descricao,
                     "deb": debito, "cred": credito
                 })
-                st.success("Lançamento registrado.")
+                st.success("Lançamento registrado!")
 
     elif menu == "Exportar Excel":
-        st.title("📥 Exportar Dados")
-        buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            entregas = pd.read_sql("SELECT * FROM entregas", conn)
-            lancamentos = pd.read_sql("SELECT * FROM lancamentos", conn)
-            entregas.to_excel(writer, index=False, sheet_name="Entregas")
-            lancamentos.to_excel(writer, index=False, sheet_name="Financeiro")
-        st.download_button("📦 Baixar Excel", data=buffer.getvalue(),
-                           file_name="dados.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.title("📤 Exportar por Escola")
+        exportar_excel_formatado()
 
     elif menu == "Gestão de Escolas":
         st.title("🏫 Gestão de Escolas")
