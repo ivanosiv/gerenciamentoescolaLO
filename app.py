@@ -56,38 +56,6 @@ def tela_login():
             else:
                 st.error("Erro ao cadastrar.")
 
-# ========== EXPORTAÇÃO PERSONALIZADA ==========
-def exportar_excel_formatado(conn):
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        escolas = conn.execute(text("SELECT id, nome FROM escolas")).fetchall()
-        resumo = []
-        for escola_id, escola_nome in escolas:
-            query = text("""
-                SELECT data, mercadoria, descricao, debito, credito
-                FROM lancamentos
-                WHERE escola_id = :id
-                ORDER BY data
-            """)
-            dados = conn.execute(query, {"id": escola_id}).fetchall()
-            df = pd.DataFrame(dados, columns=["Data", "Mercadoria", "Descrição", "Débito", "Crédito"])
-            df["Débito"] = df["Débito"].fillna(0)
-            df["Crédito"] = df["Crédito"].fillna(0)
-            df["Saldo"] = df["Crédito"] - df["Débito"]
-            df["Saldo Acumulado"] = df["Saldo"].cumsum()
-            df.to_excel(writer, sheet_name=escola_nome[:31], index=False)
-            saldo_final = df["Saldo"].sum()
-            resumo.append({"Escola": escola_nome, "Saldo Final": round(saldo_final, 2)})
-        df_resumo = pd.DataFrame(resumo)
-        df_resumo.to_excel(writer, sheet_name="Resumo", index=False)
-
-    st.download_button(
-        label="📥 Baixar Excel com todas as escolas",
-        data=buffer.getvalue(),
-        file_name="Controle_Escolas.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
 # ========== APP ==========
 if st.session_state.usuario:
     st.sidebar.title(f"Bem-vindo, {st.session_state.usuario['nome']}!")
@@ -161,8 +129,16 @@ if st.session_state.usuario:
                 st.success("Lançamento registrado.")
 
     elif menu == "Exportar Excel":
-        st.title("📥 Exportar por Escola")
-        exportar_excel_formatado(conn)
+        st.title("📥 Exportar Dados")
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            entregas = pd.read_sql("SELECT * FROM entregas", conn)
+            lancamentos = pd.read_sql("SELECT * FROM lancamentos", conn)
+            entregas.to_excel(writer, index=False, sheet_name="Entregas")
+            lancamentos.to_excel(writer, index=False, sheet_name="Financeiro")
+        st.download_button("📦 Baixar Excel", data=buffer.getvalue(),
+                           file_name="dados.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     elif menu == "Gestão de Escolas":
         st.title("🏫 Gestão de Escolas")
