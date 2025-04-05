@@ -5,7 +5,7 @@ from datetime import date
 from sqlalchemy import create_engine, text
 from io import BytesIO
 
-# Conexão com Supabase
+# Conexão com Supabase via Pooler IPv4
 db_url = st.secrets["database"]["url"]
 engine = create_engine(db_url)
 conn = engine.connect()
@@ -74,7 +74,6 @@ if st.session_state.usuario:
         st.title("📊 Visão Geral")
         col1, col2 = st.columns(2)
 
-        # Entregas por mercadoria
         res = conn.execute(text("""
             SELECT mercadorias.nome, SUM(entregas.quantidade)
             FROM entregas
@@ -88,9 +87,8 @@ if st.session_state.usuario:
         else:
             col1.info("Nenhuma entrega registrada.")
 
-        # Saldo por escola
         res = conn.execute(text("""
-            SELECT escolas.nome, SUM(COALESCE(lancamentos.credito,0) - COALESCE(lancamentos.debito,0))
+            SELECT escolas.nome, SUM(COALESCE(credito,0) - COALESCE(debito,0))
             FROM lancamentos
             JOIN escolas ON escolas.id = lancamentos.escola_id
             GROUP BY escolas.nome
@@ -102,7 +100,6 @@ if st.session_state.usuario:
         else:
             col2.info("Sem lançamentos financeiros.")
 
-        # Saldo final
         st.subheader("Resumo de Saldos")
         resumo = []
         for e_id, nome in get_todos("escolas"):
@@ -156,6 +153,20 @@ if st.session_state.usuario:
                 st.success("Lançamento registrado.")
                 st.rerun()
 
+            dados = conn.execute(text("""
+                SELECT data, mercadoria, descricao, debito, credito
+                FROM lancamentos
+                WHERE escola_id = :escola
+                ORDER BY data DESC
+            """), {"escola": escola_id}).fetchall()
+            if dados:
+                df = pd.DataFrame(dados, columns=["Data", "Mercadoria", "Descrição", "Débito", "Crédito"])
+                df["Saldo"] = df["Crédito"] - df["Débito"]
+                df["Saldo Acumulado"] = df["Saldo"][::-1].cumsum()[::-1]
+                st.dataframe(df.style.format({"Débito": "R$ {:.2f}", "Crédito": "R$ {:.2f}", "Saldo": "R$ {:.2f}", "Saldo Acumulado": "R$ {:.2f}"}))
+            else:
+                st.info("Nenhum lançamento ainda.")
+
     elif menu == "Exportar Excel":
         st.title("📥 Exportar Dados")
         buffer = BytesIO()
@@ -183,5 +194,59 @@ if st.session_state.usuario:
         st.download_button("📥 Baixar Excel Completo", data=buffer.getvalue(),
                            file_name="Controle_Escolas.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    elif menu == "Gestão de Escolas":
+        st.title("🏫 Gestão de Escolas")
+        with st.form("nova_escola"):
+            nova = st.text_input("Nova Escola")
+            if st.form_submit_button("Adicionar"):
+                try:
+                    conn.execute(text("INSERT INTO escolas (nome) VALUES (:n)"), {"n": nova})
+                    st.success("Escola adicionada!")
+                except:
+                    st.error("Erro: escola já existe.")
+        st.markdown("### Escolas Cadastradas")
+        for id_, nome in get_todos("escolas"):
+            col1, col2 = st.columns([4, 1])
+            col1.write(nome)
+            if col2.button("Remover", key=f"remover_escola_{id_}"):
+                conn.execute(text("DELETE FROM escolas WHERE id=:i"), {"i": id_})
+                st.rerun()
+
+    elif menu == "Gestão de Mercadorias":
+        st.title("📦 Gestão de Mercadorias")
+        with st.form("nova_mercadoria"):
+            nova = st.text_input("Nova Mercadoria")
+            if st.form_submit_button("Adicionar"):
+                try:
+                    conn.execute(text("INSERT INTO mercadorias (nome) VALUES (:n)"), {"n": nova})
+                    st.success("Mercadoria adicionada!")
+                except:
+                    st.error("Erro: mercadoria já existe.")
+        st.markdown("### Mercadorias Cadastradas")
+        for id_, nome in get_todos("mercadorias"):
+            col1, col2 = st.columns([4, 1])
+            col1.write(nome)
+            if col2.button("Remover", key=f"remover_merc_{id_}"):
+                conn.execute(text("DELETE FROM mercadorias WHERE id=:i"), {"i": id_})
+                st.rerun()
+
+    elif menu == "Gestão de Descrições":
+        st.title("📝 Gestão de Descrições")
+        with st.form("nova_descricao"):
+            nova = st.text_input("Nova Descrição")
+            if st.form_submit_button("Adicionar"):
+                try:
+                    conn.execute(text("INSERT INTO descricoes (texto) VALUES (:t)"), {"t": nova})
+                    st.success("Descrição adicionada!")
+                except:
+                    st.error("Erro: descrição já existe.")
+        st.markdown("### Descrições Cadastradas")
+        for id_, texto in get_todos("descricoes", "texto"):
+            col1, col2 = st.columns([4, 1])
+            col1.write(texto)
+            if col2.button("Remover", key=f"remover_desc_{id_}"):
+                conn.execute(text("DELETE FROM descricoes WHERE id=:i"), {"i": id_})
+                st.rerun()
 else:
     tela_login()
