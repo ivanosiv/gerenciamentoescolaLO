@@ -95,9 +95,6 @@ def tela_login():
                 st.success("Usuário cadastrado!")
             else:
                 st.error("Erro: email já utilizado.")
-    st.subheader("📋 Usuários cadastrados (debug)")
-    usuarios = conn.execute(text("SELECT id, nome, email FROM usuarios ORDER BY id")).fetchall()
-    st.write(usuarios)
 
 # =================== App Principal ===================
 
