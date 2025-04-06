@@ -4,9 +4,9 @@ from datetime import date
 from sqlalchemy import create_engine, text
 from io import BytesIO
 
-# Conexão com Supabase via Pooler IPv4 (definido nos secrets)
+# Conexão com Supabase via Pooler IPv4 (definido em st.secrets)
 db_url = st.secrets["database"]["url"]
-engine = create_engine(db_url, echo=True)  # echo=True para debug, remova em produção
+engine = create_engine(db_url, echo=True)
 conn = engine.connect()
 
 # =================== Funções utilitárias ===================
@@ -90,7 +90,6 @@ def tela_login():
                 st.success("Usuário cadastrado!")
             else:
                 st.error("Erro: email já utilizado.")
-    # Debug: exibe os usuários cadastrados (remova em produção)
     st.subheader("📋 Usuários cadastrados (debug)")
     usuarios = conn.execute(text("SELECT id, nome, email, senha FROM usuarios ORDER BY id")).fetchall()
     st.write(usuarios)
@@ -101,8 +100,7 @@ if st.session_state.usuario:
     st.sidebar.title(f"Bem-vindo, {st.session_state.usuario['nome']}!")
     menu = st.sidebar.radio("Menu", [
         "Dashboard 📊", "Entregas", "Financeiro",
-        "Exportar Excel", "Gestão de Escolas",
-        "Gestão de Mercadorias", "Gestão de Descrições", "Sair"
+        "Exportar Excel", "Gestão de Escolas", "Gestão de Mercadorias", "Gestão de Descrições", "Sair"
     ])
 
     if menu == "Sair":
@@ -218,7 +216,7 @@ if st.session_state.usuario:
                 st.info("Nenhum lançamento encontrado.")
         else:
             st.warning("Cadastre escolas, mercadorias e descrições antes.")
-
+            
     elif menu == "Exportar Excel":
         st.title("📥 Exportar Dados")
         buffer = BytesIO()
